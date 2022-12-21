@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 import torch.nn.functional as F
+import gc
 
 import importlib
 psmnet_models = importlib.import_module("thirdparty.PSMNet.models")
@@ -58,6 +59,7 @@ class PSMNetBlock:
     def dispose(self):
         if not self.disposed:
             del self.model
+            gc.collect()
             torch.cuda.empty_cache()
             self.disposed = True
 
