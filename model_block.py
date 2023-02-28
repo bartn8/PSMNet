@@ -26,8 +26,7 @@ class PSMNetBlock:
         self.device = device
         self.disposed = False
 
-        self.infer_transform = transforms.Compose([transforms.ToTensor(),
-                                            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)])    
+        self.infer_transform = transforms.Compose([transforms.ToTensor()])    
 
     def log(self, x):
         if self.verbose:
@@ -70,34 +69,25 @@ class PSMNetBlock:
         else:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        #img = img.astype(np.float32)
-        h,w = img.shape[:2]
-
-        img = self.infer_transform(img)
-
+        img = img.astype(np.uint8) / 255.0
+        ht,wt = img.shape[:2]
+        img = torch.from_numpy(img).permute(2, 0, 1).float()
+                
         # pad to width and hight to 16 times
-        if img.shape[1] % 16 != 0:
-            times = img.shape[1]//16       
-            top_pad = (times+1)*16 -img.shape[1]
-        else:
-            top_pad = 0
+        pad_ht = (((ht // 32) + 1) * 32 - ht) % 32
+        pad_wd = (((wt // 32) + 1) * 32 - wt) % 32
+        _pad = [pad_wd//2, pad_wd - pad_wd//2, pad_ht//2, pad_ht - pad_ht//2]
 
-        if img.shape[2] % 16 != 0:
-            times = img.shape[2]//16                       
-            right_pad = (times+1)*16-img.shape[2]
-        else:
-            right_pad = 0 
+        img = F.pad(img, _pad, mode='replicate')
 
-        img = F.pad(img,(0,right_pad, top_pad,0)).unsqueeze(0)
+        self.log(f"Original shape: {(ht,wt)}, padding: {_pad}, new shape: {img.shape}")
 
-        self.log(f"Original shape: {(h,w)}, padding: {(top_pad, right_pad)}, new shape: {img.shape}")
-
-        return img.to(self.device), top_pad, right_pad
+        return img.unsqueeze(0).to(self.device), _pad
 
     def test(self, left_vpp, right_vpp):
         #Input conversion
-        left_vpp, top_pad, right_pad = self._conv_image(left_vpp)
-        right_vpp, _, _ = self._conv_image(right_vpp)
+        left_vpp, _pad = self._conv_image(left_vpp)
+        right_vpp, _ = self._conv_image(right_vpp)
 
         #left_vpp = Variable(torch.FloatTensor(left_vpp))
         #right_vpp = Variable(torch.FloatTensor(right_vpp))
@@ -107,7 +97,8 @@ class PSMNetBlock:
             pred_disp = self.model(left_vpp, right_vpp)
             pred_disp = torch.squeeze(pred_disp).data.cpu().numpy()
 
-            if top_pad !=0 or right_pad != 0:
-                pred_disp = pred_disp[top_pad:,:pred_disp.shape[1]-right_pad] 
+            ht, wd = pred_disp.shape[-2:]
+            c = [_pad[2], ht-_pad[3], _pad[0], wd-_pad[1]]
+            pred_disp = pred_disp[..., c[0]:c[1], c[2]:c[3]]
             
             return pred_disp
